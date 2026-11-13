@@ -1,0 +1,102 @@
+services:
+  # ---------------------------------------------------------------------------
+  # BASE DE DADOS (PostgreSQL 16)
+  # ---------------------------------------------------------------------------
+  pharmawaste-db:
+    image: postgres:16-alpine
+    container_name: pharmawaste-db
+    restart: always
+    environment:
+      POSTGRES_USER: pharma_user
+      POSTGRES_PASSWORD: pharma_password_dev_123
+      POSTGRES_DB: pharmawaste_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pharmawaste-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pharma_user -d pharmawaste_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # BACKEND (NestJS + Prisma + Swagger)
+  # ---------------------------------------------------------------------------
+  pharmawaste-api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: pharmawaste-api
+    restart: unless-stopped
+    depends_on:
+      pharmawaste-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://pharma_user:pharma_password_dev_123@pharmawaste-db:5432/pharmawaste_db?schema=public"
+      PORT: 3333
+      BETTER_AUTH_SECRET: "dev_secret_key_pharmawaste_2026_super_secure"
+      BETTER_AUTH_URL: "http://localhost:3333"
+    ports:
+      - "3333:3333"
+    volumes:
+      - ./apps/api:/app
+      - /app/node_modules
+    networks:
+      - pharmawaste-network
+
+  # ---------------------------------------------------------------------------
+  # FRONTEND (Next.js + Tailwind)
+  # ---------------------------------------------------------------------------
+  pharmawaste-web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: pharmawaste-web
+    restart: unless-stopped
+    depends_on:
+      - pharmawaste-api
+    environment:
+      INTERNAL_API_URL: "http://pharmawaste-api:3333/api/v1/inventory"
+      NEXT_PUBLIC_API_URL: "http://localhost:3333/api/v1/inventory"
+      NEXT_PUBLIC_BETTER_AUTH_URL: "http://localhost:3333"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+    networks:
+      - pharmawaste-network
+
+  # ---------------------------------------------------------------------------
+  # ADMIN CONSOLE (Next.js + Tailwind - Falcão Company)
+  # ---------------------------------------------------------------------------
+  pharmawaste-admin:
+    build:
+      context: ./apps/admin
+      dockerfile: Dockerfile
+    container_name: pharmawaste-admin
+    restart: unless-stopped
+    depends_on:
+      - pharmawaste-api
+    environment:
+      INTERNAL_ADMIN_API_URL: "http://pharmawaste-api:3333/api/v1/admin"
+      NEXT_PUBLIC_ADMIN_API_URL: "http://localhost:3333/api/v1/admin"
+      NEXT_PUBLIC_BETTER_AUTH_URL: "http://localhost:3333"
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/admin:/app
+      - /app/node_modules
+    networks:
+      - pharmawaste-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  pharmawaste-network:
+    driver: bridge

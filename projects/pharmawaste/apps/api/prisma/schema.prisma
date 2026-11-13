@@ -1,0 +1,283 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -----------------------------------------------------------------------------
+// MODELOS OFICIAIS GERADOS PELO BETTER AUTH CLI
+// -----------------------------------------------------------------------------
+
+model User {
+  id            String            @id
+  name          String
+  email         String
+  emailVerified Boolean           @default(false)
+  image         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  members       Member[]
+  invitations   Invitation[]
+  uploads       InventoryUpload[]
+
+  role       String?
+  banned     Boolean?  @default(false)
+  banReason  String?
+  banExpires DateTime?
+
+  username        String?
+  displayUsername String?
+
+  @@unique([email])
+  @@map("user")
+  @@unique([username])
+}
+
+model Session {
+  id                   String   @id
+  expiresAt            DateTime
+  token                String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?
+  userAgent            String?
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganizationId String?
+
+  impersonatedBy String?
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model Organization {
+  id             String            @id
+  name           String
+  slug           String
+  logo           String?
+  createdAt      DateTime
+  metadata       String? // Guarda NIF, Alvará INFARMED, etc.
+  isDemo         Boolean           @default(false)
+  demoExpiresAt  DateTime?
+  members        Member[]
+  invitations    Invitation[]
+  uploads        InventoryUpload[]
+  batches        MedicationBatch[]
+  returnRequests ReturnRequest[]
+  subscription   Subscription?
+
+  @@unique([slug])
+  @@map("organization")
+}
+
+model Member {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String       @default("member")
+  createdAt      DateTime
+
+  @@index([organizationId])
+  @@index([userId])
+  @@map("member")
+}
+
+model Invitation {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           String?
+  status         String       @default("pending")
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  inviterId      String
+  user           User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitation")
+}
+
+// -----------------------------------------------------------------------------
+// MODELOS DE NEGÓCIO PHARMAWASTE
+// -----------------------------------------------------------------------------
+
+enum UploadStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum BatchRiskStatus {
+  HEALTHY // > 90 dias
+  WARNING // 60 a 90 dias
+  CRITICAL // < 60 dias (Risco Iminente)
+  EXPIRED // Expirado
+  RETURNED // Devolvido
+}
+
+model InventoryUpload {
+  id               String       @id @default(cuid())
+  organizationId   String
+  uploadedById     String
+  fileName         String
+  fileSize         Int
+  fileUrl          String?
+  status           UploadStatus @default(PENDING)
+  totalRows        Int          @default(0)
+  totalValueAtRisk Float        @default(0.0)
+  errorMessage     String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy   User              @relation(fields: [uploadedById], references: [id])
+  batches      MedicationBatch[]
+
+  @@map("inventory_uploads")
+}
+
+model MedicationBatch {
+  id              String          @id @default(cuid())
+  organizationId  String
+  uploadId        String?
+  returnRequestId String?
+  cnp             String // Código Nacional do Medicamento INFARMED
+  name            String // Nome / Apresentação
+  batchNumber     String // Número de Lote
+  expirationDate  DateTime // Validade
+  quantity        Int // Quantidade em stock
+  unitCost        Float // Custo Unitário
+  totalCost       Float // Custo Total
+  supplier        String? // Laboratório / Grossista
+  riskStatus      BatchRiskStatus @default(HEALTHY)
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  upload        InventoryUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  returnRequest ReturnRequest?   @relation(fields: [returnRequestId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, cnp, batchNumber, expirationDate], name: "unique_org_batch")
+  @@index([organizationId, expirationDate])
+  @@index([cnp])
+  @@map("medication_batches")
+}
+
+enum ReturnStatus {
+  DRAFT
+  GENERATED
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+}
+
+model ReturnRequest {
+  id              String       @id @default(cuid())
+  organizationId  String
+  wholesalerOrLab String
+  status          ReturnStatus @default(DRAFT)
+  totalItems      Int          @default(0)
+  totalValue      Float        @default(0.0)
+  documentUrl     String?
+  submittedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  batches      MedicationBatch[]
+
+  @@map("return_requests")
+}
+
+model AccountRequest {
+  id            String   @id @default(cuid())
+  pharmacyName  String
+  nif           String?
+  licenseNumber String?
+  contactName   String
+  email         String
+  phone         String?
+  notes         String?
+  status        String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("account_requests")
+}
+
+model SubscriptionPlan {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  description   String?
+  monthlyPrice  Float
+  maxUsers      Int            @default(5)
+  maxBatches    Int?
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id                 String           @id @default(cuid())
+  organizationId     String           @unique
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planId             String
+  plan               SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  status             String           @default("ACTIVE") // ACTIVE, TRIAL, PAST_DUE, CANCELED
+  monthlyPrice       Float
+  currentPeriodStart DateTime         @default(now())
+  currentPeriodEnd   DateTime?
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@map("subscriptions")
+}
